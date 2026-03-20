@@ -1,13 +1,78 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+
+const SPREADSHEET_ID = import.meta.env.VITE_GOOGLE_SHEETS_SPREADSHEET_ID
+const API_KEY = import.meta.env.VITE_GOOGLE_SHEETS_API_KEY
 
 function App() {
-  const [tasks, setTasks] = useState([
-    { id: 1, title: 'Welcome to OpenClaw Command Center', completed: false, priority: 'high' },
-    { id: 2, title: 'Set up Google Sheets integration', completed: false, priority: 'medium' },
-    { id: 3, title: 'Deploy to Netlify', completed: false, priority: 'high' },
-  ])
+  const [tasks, setTasks] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [newTask, setNewTask] = useState('')
   const [filter, setFilter] = useState('all')
+
+  useEffect(() => {
+    fetchTasks()
+  }, [])
+
+  const fetchTasks = async () => {
+    if (!SPREADSHEET_ID || !API_KEY) {
+      setError('Missing API configuration')
+      setLoading(false)
+      return
+    }
+
+    try {
+      const response = await fetch(
+        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/Sheet1!A:Z?key=${API_KEY}`
+      )
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch from Google Sheets')
+      }
+      
+      const data = await response.json()
+      
+      if (data.values && data.values.length > 0) {
+        // Check if first row is a header row
+        const firstRow = data.values[0].map(h => h?.toString().toLowerCase().trim() || '')
+        const hasHeader = firstRow.includes('task') || firstRow.includes('title') || firstRow.includes('name')
+        
+        let fetchedTasks
+        if (hasHeader) {
+          // Skip header row, map data to tasks
+          const headerRow = firstRow
+          const taskIndex = headerRow.indexOf('task') >= 0 ? headerRow.indexOf('task') : 
+                           headerRow.indexOf('title') >= 0 ? headerRow.indexOf('title') : 0
+          const statusIndex = headerRow.indexOf('status') >= 0 ? headerRow.indexOf('status') : 
+                             headerRow.indexOf('done') >= 0 ? headerRow.indexOf('done') : -1
+          const priorityIndex = headerRow.indexOf('priority') >= 0 ? headerRow.indexOf('priority') : -1
+          
+          fetchedTasks = data.values.slice(1).map((row, idx) => ({
+            id: idx + 1,
+            title: row[taskIndex] || '',
+            completed: statusIndex >= 0 ? (row[statusIndex]?.toLowerCase() === 'done' || row[statusIndex]?.toLowerCase() === 'completed' || row[statusIndex]?.toLowerCase() === 'x') : false,
+            priority: priorityIndex >= 0 ? (row[priorityIndex]?.toLowerCase() || 'medium') : 'medium'
+          })).filter(t => t.title)
+        } else {
+          // No header row - assume format: Task, Priority, Status
+          fetchedTasks = data.values.map((row, idx) => ({
+            id: idx + 1,
+            title: row[0] || '',
+            completed: row[2]?.toLowerCase() === 'x' || row[2]?.toLowerCase() === 'done' || row[2]?.toLowerCase() === 'completed',
+            priority: row[1]?.toLowerCase() || 'medium'
+          })).filter(t => t.title)
+        }
+        
+        setTasks(fetchedTasks)
+      } else {
+        setTasks([])
+      }
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const addTask = () => {
     if (!newTask.trim()) return
@@ -100,7 +165,9 @@ function App() {
         </section>
 
         <section className="task-list">
-          {filteredTasks.length === 0 ? (
+          {loading ? (
+            <p className="empty-state">Loading tasks...</p>
+          ) : filteredTasks.length === 0 ? (
             <p className="empty-state">No tasks found</p>
           ) : (
             filteredTasks.map(task => (
@@ -127,8 +194,12 @@ function App() {
         </section>
 
         <section className="connection-status">
-          <p>📊 Google Sheets: <span className="status pending">Setup Required</span></p>
-          <p className="hint">Configure your Google Sheets API key to enable data sync</p>
+          <p>📊 Google Sheets: {
+            loading ? <span className="status pending">Loading...</span> :
+            error ? <span className="status error">{error}</span> :
+            <span className="status connected">Connected ({tasks.length} tasks)</span>
+          }</p>
+          <p className="hint">{error ? 'Check API key and spreadsheet ID' : 'Data syncs from Google Sheets'}</p>
         </section>
       </main>
 
@@ -329,6 +400,14 @@ function App() {
 
         .status.pending {
           color: #ffa502;
+        }
+
+        .status.connected {
+          color: #2ed573;
+        }
+
+        .status.error {
+          color: #ff4757;
         }
 
         .hint {
