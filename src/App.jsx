@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 
 const SPREADSHEET_ID = import.meta.env.VITE_GOOGLE_SHEETS_SPREADSHEET_ID
 const API_KEY = import.meta.env.VITE_GOOGLE_SHEETS_API_KEY
+const STORAGE_KEY = 'openclaw_tasks'
 
 function App() {
   const [tasks, setTasks] = useState([])
@@ -9,10 +10,34 @@ function App() {
   const [error, setError] = useState(null)
   const [newTask, setNewTask] = useState('')
   const [filter, setFilter] = useState('all')
+  const [dataSource, setDataSource] = useState('none')
 
+  // Load tasks from localStorage on mount
   useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY)
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored)
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          setTasks(parsed)
+          setDataSource('localStorage')
+          setLoading(false)
+          return
+        }
+      } catch (e) {
+        console.warn('Failed to parse localStorage tasks:', e)
+      }
+    }
+    // No stored tasks or parse failed - try Google Sheets
     fetchTasks()
   }, [])
+
+  // Save tasks to localStorage whenever they change
+  useEffect(() => {
+    if (!loading && tasks.length > 0) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
+    }
+  }, [tasks, loading])
 
   const fetchTasks = async () => {
     if (!SPREADSHEET_ID || !API_KEY) {
@@ -64,11 +89,17 @@ function App() {
         }
         
         setTasks(fetchedTasks)
+        setDataSource('googleSheets')
       } else {
         setTasks([])
+        setDataSource('googleSheets')
       }
     } catch (err) {
       setError(err.message)
+      // If no data in localStorage either, start with empty array
+      if (tasks.length === 0) {
+        setTasks([])
+      }
     } finally {
       setLoading(false)
     }
@@ -194,12 +225,32 @@ function App() {
         </section>
 
         <section className="connection-status">
-          <p>📊 Google Sheets: {
+          <p>📊 Data Source: {
             loading ? <span className="status pending">Loading...</span> :
-            error ? <span className="status error">{error}</span> :
-            <span className="status connected">Connected ({tasks.length} tasks)</span>
+            error && dataSource === 'none' ? <span className="status error">{error}</span> :
+            <span className="status connected">
+              {dataSource === 'googleSheets' ? 'Google Sheets' : 'Local Storage'} 
+              ({tasks.length} tasks)
+            </span>
           }</p>
-          <p className="hint">{error ? 'Check API key and spreadsheet ID' : 'Data syncs from Google Sheets'}</p>
+          <p className="hint">
+            {dataSource === 'localStorage' ? 'Changes saved to browser storage' : 
+             error ? 'Check API key and spreadsheet ID' : 
+             'Data syncs from Google Sheets • Changes saved locally'}
+          </p>
+          {dataSource === 'localStorage' && (
+            <button 
+              onClick={() => {
+                localStorage.removeItem(STORAGE_KEY)
+                setDataSource('none')
+                setTasks([])
+                fetchTasks()
+              }}
+              className="refresh-btn"
+            >
+              🔄 Retry Google Sheets
+            </button>
+          )}
         </section>
       </main>
 
@@ -414,6 +465,21 @@ function App() {
           font-size: 0.875rem;
           color: #666;
           margin-top: 0.5rem;
+        }
+
+        .refresh-btn {
+          margin-top: 0.75rem;
+          background: #646cff;
+          color: white;
+          border: none;
+          padding: 0.5rem 1rem;
+          border-radius: 6px;
+          cursor: pointer;
+          font-size: 0.875rem;
+        }
+
+        .refresh-btn:hover {
+          background: #535bf2;
         }
       `}</style>
     </div>
