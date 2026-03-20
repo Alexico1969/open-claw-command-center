@@ -13,8 +13,26 @@ import {
 
 const TASKS_COLLECTION = 'tasks'
 const LOGS_COLLECTION = 'logs'
+const TRUSTED_KEY = 'openclaw_trusted'
+
+// Simple hash function for password (not secure, but prevents plain text storage)
+const hashPassword = (password) => {
+  let hash = 0
+  for (let i = 0; i < password.length; i++) {
+    const char = password.charCodeAt(i)
+    hash = ((hash << 5) - hash) + char
+    hash = hash & hash
+  }
+  return hash.toString(16)
+}
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(() => {
+    const trusted = localStorage.getItem(TRUSTED_KEY)
+    return trusted === 'true'
+  })
+  const [passwordInput, setPasswordInput] = useState('')
+  const [loginError, setLoginError] = useState('')
   const [currentView, setCurrentView] = useState('tasks')
   const [tasks, setTasks] = useState([])
   const [logs, setLogs] = useState([])
@@ -129,6 +147,29 @@ function App() {
     }
   }
   
+  // Handle login
+  const handleLogin = () => {
+    const correctPassword = import.meta.env.VITE_PASSWORD || import.meta.env.PASSWORD
+    if (!correctPassword) {
+      setLoginError('Password not configured')
+      return
+    }
+    
+    if (hashPassword(passwordInput) === hashPassword(correctPassword)) {
+      localStorage.setItem(TRUSTED_KEY, 'true')
+      setIsAuthenticated(true)
+      setLoginError('')
+    } else {
+      setLoginError('Incorrect password')
+    }
+  }
+  
+  // Handle logout
+  const handleLogout = () => {
+    localStorage.removeItem(TRUSTED_KEY)
+    setIsAuthenticated(false)
+  }
+  
   // Log chat messages
   const logChat = async (role, content) => {
     try {
@@ -144,10 +185,96 @@ function App() {
     }
   }
   
-  // Log initial chat when app loads
+  // Log initial chat when app loads (only if authenticated)
   useEffect(() => {
-    logChat('system', 'OpenClaw Command Center initialized')
-  }, [])
+    if (isAuthenticated) {
+      logChat('system', 'User authenticated - OpenClaw Command Center ready')
+    }
+  }, [isAuthenticated])
+
+  // Show login screen if not authenticated
+  if (!isAuthenticated) {
+    return (
+      <div className="login-screen">
+        <div className="login-box">
+          <h1>🔒 OpenClaw Command Center</h1>
+          <p className="login-subtitle">Enter password to access</p>
+          <input
+            type="password"
+            value={passwordInput}
+            onChange={(e) => setPasswordInput(e.target.value)}
+            placeholder="Enter password..."
+            onKeyPress={(e) => e.key === 'Enter' && handleLogin()}
+            className="login-input"
+          />
+          <button onClick={handleLogin} className="login-button">
+            Login
+          </button>
+          {loginError && <p className="login-error">{loginError}</p>}
+        </div>
+        <style>{`
+          .login-screen {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+          }
+          .login-box {
+            background: #1f1f38;
+            padding: 2.5rem;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+            text-align: center;
+            border: 1px solid #333;
+          }
+          .login-box h1 {
+            color: #646cff;
+            margin-bottom: 0.5rem;
+            font-size: 1.5rem;
+          }
+          .login-subtitle {
+            color: #888;
+            margin-bottom: 1.5rem;
+          }
+          .login-input {
+            width: 100%;
+            padding: 0.75rem;
+            border: 1px solid #444;
+            border-radius: 6px;
+            background: #2a2a4a;
+            color: #fff;
+            font-size: 1rem;
+            margin-bottom: 1rem;
+            box-sizing: border-box;
+          }
+          .login-input:focus {
+            outline: none;
+            border-color: #646cff;
+          }
+          .login-button {
+            width: 100%;
+            padding: 0.75rem;
+            background: #646cff;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: background 0.2s;
+          }
+          .login-button:hover {
+            background: #535bf2;
+          }
+          .login-error {
+            color: #ff6b6b;
+            margin-top: 1rem;
+            font-size: 0.875rem;
+          }
+        `}</style>
+      </div>
+    )
+  }
 
   // Auto-execute tasks based on keywords
   const executeTask = async (taskId, title) => {
@@ -466,6 +593,9 @@ function App() {
           ))}
         </nav>
         <div className="sidebar-footer">
+          <button className="logout-btn" onClick={handleLogout}>
+            🚪 Logout
+          </button>
           <p className="version">v0.2.0</p>
         </div>
       </aside>
@@ -545,6 +675,24 @@ function App() {
         .sidebar-footer {
           padding: 1rem 1.5rem;
           border-top: 1px solid #333;
+        }
+
+        .logout-btn {
+          width: 100%;
+          padding: 0.5rem;
+          margin-bottom: 0.75rem;
+          background: #3a3a5a;
+          color: #aaa;
+          border: 1px solid #444;
+          border-radius: 6px;
+          cursor: pointer;
+          font-size: 0.875rem;
+          transition: all 0.2s;
+        }
+
+        .logout-btn:hover {
+          background: #4a4a6a;
+          color: #fff;
         }
 
         .version {
