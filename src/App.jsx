@@ -12,17 +12,21 @@ import {
 } from 'firebase/firestore'
 
 const TASKS_COLLECTION = 'tasks'
+const LOGS_COLLECTION = 'logs'
 
 function App() {
   const [currentView, setCurrentView] = useState('tasks')
   const [tasks, setTasks] = useState([])
+  const [logs, setLogs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [newTask, setNewTask] = useState('')
   const [filter, setFilter] = useState('all')
   const [dataSource, setDataSource] = useState('none')
+  const [logSearch, setLogSearch] = useState('')
+  const [logDateFilter, setLogDateFilter] = useState('')
 
-  // Set up real-time Firestore listener
+  // Set up real-time Firestore listener for tasks
   useEffect(() => {
     if (currentView !== 'tasks') return
     
@@ -54,20 +58,187 @@ function App() {
     }
   }, [currentView])
 
+  // Set up real-time Firestore listener for logs
+  useEffect(() => {
+    if (currentView !== 'logs') return
+    
+    try {
+      const q = query(collection(db, LOGS_COLLECTION), orderBy('timestamp', 'desc'))
+      
+      const unsubscribe = onSnapshot(q, 
+        (snapshot) => {
+          const fetchedLogs = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }))
+          setLogs(fetchedLogs)
+          setLoading(false)
+        },
+        (err) => {
+          console.error('Firestore logs error:', err)
+          setError(err.message)
+          setLoading(false)
+        }
+      )
+
+      return () => unsubscribe()
+    } catch (err) {
+      console.error('Logs setup error:', err)
+      setError(err.message)
+      setLoading(false)
+    }
+  }, [currentView])
+
   const addTask = async () => {
     if (!newTask.trim()) return
     
+    const taskTitle = newTask.trim()
+    setNewTask('')
+    
     try {
-      await addDoc(collection(db, TASKS_COLLECTION), {
-        title: newTask.trim(),
+      // Add the task to Firebase
+      const docRef = await addDoc(collection(db, TASKS_COLLECTION), {
+        title: taskTitle,
         completed: false,
         priority: 'medium',
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        status: 'pending'
       })
-      setNewTask('')
+      
+      // Execute the task automatically
+      executeTask(docRef.id, taskTitle)
+      
     } catch (err) {
       console.error('Error adding task:', err)
       setError(err.message)
+    }
+  }
+  
+  // Create log entry
+  const createLog = async (message, type = 'info', details = '') => {
+    try {
+      await addDoc(collection(db, LOGS_COLLECTION), {
+        message,
+        type,
+        details,
+        timestamp: Date.now(),
+        source: 'chat'
+      })
+    } catch (err) {
+      console.error('Error creating log:', err)
+    }
+  }
+  
+  // Log chat messages
+  const logChat = async (role, content) => {
+    try {
+      await addDoc(collection(db, LOGS_COLLECTION), {
+        message: `[${role}] ${content}`,
+        type: 'chat',
+        details: `Role: ${role}`,
+        timestamp: Date.now(),
+        source: 'chat'
+      })
+    } catch (err) {
+      console.error('Error logging chat:', err)
+    }
+  }
+  
+  // Log initial chat when app loads
+  useEffect(() => {
+    logChat('system', 'OpenClaw Command Center initialized')
+  }, [])
+
+  // Auto-execute tasks based on keywords
+  const executeTask = async (taskId, title) => {
+    const lowerTitle = title.toLowerCase()
+    
+    try {
+      // Check if task is about weather
+      if (lowerTitle.includes('weather')) {
+        // Log task start
+        await createLog(`Task started: "${title}"`, 'task', 'Fetching weather data...')
+        
+        // Extract location (default to Freeport, NY if not specified)
+        let location = 'Freeport, NY'
+        const match = lowerTitle.match(/weather (?:in |for )?(.+?)(?: and|$)/)
+        if (match) location = match[1].trim()
+        
+        // Fetch weather data
+        const weatherResponse = await fetch(
+          `https://api.open-meteo.com/v1/forecast?latitude=40.83&longitude=-73.58&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,wind_direction_10m,wind_gusts_10m,cloud_cover,pressure_msl&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto`
+        )
+        const weatherData = await weatherResponse.json()
+        
+        // Send to Notion
+        const notionPageId = import.meta.env.VITE_NOTION_PAGE_ID
+        if (notionPageId) {
+          // Create a new page under the parent
+          await fetch('https://api.notion.com/v1/pages', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${import.meta.env.VITE_NOTION_API_KEY}`,
+              'Content-Type': 'application/json',
+              'Notion-Version': '2022-06-28'
+            },
+            body: JSON.stringify({
+              parent: { page_id: notionPageId },
+              properties: {
+                title: { title: [{ text: { content: `Weather - ${location}` } }] }
+              }
+            })
+          })
+        }
+        
+        // Mark task as completed and log
+        await updateDoc(doc(db, TASKS_COLLECTION, taskId), {
+          completed: true,
+          status: 'completed',
+          result: `Weather for ${location}: ${weatherData.current.temperature_2m}°C`
+        })
+        
+        await createLog(`Task completed: "${title}"`, 'success', `Weather sent to Notion: ${weatherData.current.temperature_2m}°C`)
+      }
+      // Check if task is about sending to Notion
+      else if (lowerTitle.includes('notion')) {
+        const notionPageId = import.meta.env.VITE_NOTION_PAGE_ID
+        if (notionPageId) {
+          // Extract what to send
+          let content = title.replace(/notion/gi, '').replace(/send/gi, '').trim()
+          if (!content) content = 'Task update'
+          
+          await fetch('https://api.notion.com/v1/pages', {
+            method: 'POST',
+            headers: {
+              'Authorization': `Bearer ${import.meta.env.VITE_NOTION_API_KEY}`,
+              'Content-Type': 'application/json',
+              'Notion-Version': '2022-06-28'
+            },
+            body: JSON.stringify({
+              parent: { page_id: notionPageId },
+              properties: {
+                title: { title: [{ text: { content: content } }] }
+              }
+            })
+          })
+          
+          await updateDoc(doc(db, TASKS_COLLECTION, taskId), {
+            completed: true,
+            status: 'completed',
+            result: 'Sent to Notion'
+          })
+        }
+      }
+      // Default: mark as pending for manual execution
+      else {
+        console.log('Task requires manual execution:', title)
+      }
+    } catch (err) {
+      console.error('Error executing task:', err)
+      await updateDoc(doc(db, TASKS_COLLECTION, taskId), {
+        status: 'error',
+        error: err.message
+      })
     }
   }
 
@@ -107,8 +278,18 @@ function App() {
 
   // Menu items for sidebar
   const menuItems = [
-    { id: 'tasks', label: '📋 Tasks', icon: '📋' },
+    { id: 'tasks', label: 'Tasks', icon: '📋' },
+    { id: 'logs', label: 'Logs', icon: '📜' },
   ]
+
+  // Filter logs by search and date
+  const filteredLogs = logs.filter(log => {
+    const matchesSearch = !logSearch || 
+      (log.message && log.message.toLowerCase().includes(logSearch.toLowerCase()))
+    const matchesDate = !logDateFilter || 
+      (log.timestamp && new Date(log.timestamp).toISOString().split('T')[0] === logDateFilter)
+    return matchesSearch && matchesDate
+  })
 
   const renderContent = () => {
     switch (currentView) {
@@ -208,6 +389,59 @@ function App() {
             </section>
           </>
         )
+      
+      case 'logs':
+        return (
+          <>
+            <section className="log-controls">
+              <input
+                type="text"
+                placeholder="🔍 Search logs..."
+                value={logSearch}
+                onChange={(e) => setLogSearch(e.target.value)}
+                className="log-search"
+              />
+              <input
+                type="date"
+                value={logDateFilter}
+                onChange={(e) => setLogDateFilter(e.target.value)}
+                className="log-date"
+              />
+              {(logSearch || logDateFilter) && (
+                <button 
+                  onClick={() => { setLogSearch(''); setLogDateFilter('') }}
+                  className="clear-btn"
+                >
+                  Clear
+                </button>
+              )}
+            </section>
+
+            <section className="log-list">
+              {loading ? (
+                <p className="empty-state">Loading logs...</p>
+              ) : filteredLogs.length === 0 ? (
+                <p className="empty-state">No logs found</p>
+              ) : (
+                filteredLogs.map(log => (
+                  <div key={log.id} className="log-item">
+                    <div className="log-header">
+                      <span className="log-date">
+                        {log.timestamp ? new Date(log.timestamp).toLocaleString() : 'Unknown'}
+                      </span>
+                      <span className={`log-type ${log.type || 'info'}`}>
+                        {log.type || 'info'}
+                      </span>
+                    </div>
+                    <div className="log-message">{log.message}</div>
+                    {log.details && <div className="log-details">{log.details}</div>}
+                  </div>
+                ))
+              )}
+            </section>
+          </>
+        )
+      
       default:
         return <p className="empty-state">Coming soon...</p>
     }
@@ -537,6 +771,104 @@ function App() {
           font-size: 0.875rem;
           color: #666;
           margin-top: 0.5rem;
+        }
+
+        .log-controls {
+          display: flex;
+          gap: 0.5rem;
+          margin-bottom: 1.5rem;
+        }
+
+        .log-search {
+          flex: 1;
+          padding: 0.75rem 1rem;
+          border: 1px solid #333;
+          border-radius: 8px;
+          background: #1a1a2e;
+          color: white;
+          font-size: 1rem;
+        }
+
+        .log-date {
+          padding: 0.75rem;
+          border: 1px solid #333;
+          border-radius: 8px;
+          background: #1a1a2e;
+          color: white;
+          font-size: 1rem;
+        }
+
+        .clear-btn {
+          padding: 0.75rem 1rem;
+          background: #ff4757;
+          color: white;
+          border: none;
+          border-radius: 8px;
+          cursor: pointer;
+        }
+
+        .log-list {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+
+        .log-item {
+          background: #1a1a2e;
+          border-radius: 8px;
+          padding: 1rem;
+          border: 1px solid #333;
+        }
+
+        .log-header {
+          display: flex;
+          justify-content: space-between;
+          margin-bottom: 0.5rem;
+        }
+
+        .log-date {
+          color: #888;
+          font-size: 0.875rem;
+        }
+
+        .log-type {
+          font-size: 0.75rem;
+          padding: 0.25rem 0.5rem;
+          border-radius: 4px;
+          text-transform: uppercase;
+        }
+
+        .log-type.info {
+          background: #646cff;
+          color: white;
+        }
+
+        .log-type.task {
+          background: #ffa502;
+          color: black;
+        }
+
+        .log-type.success {
+          background: #2ed573;
+          color: black;
+        }
+
+        .log-type.error {
+          background: #ff4757;
+          color: white;
+        }
+
+        .log-message {
+          color: white;
+          font-size: 1rem;
+        }
+
+        .log-details {
+          margin-top: 0.5rem;
+          padding-top: 0.5rem;
+          border-top: 1px solid #333;
+          color: #888;
+          font-size: 0.875rem;
         }
       `}</style>
     </div>
