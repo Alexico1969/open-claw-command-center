@@ -14,6 +14,7 @@ import {
 const TASKS_COLLECTION = 'tasks'
 
 function App() {
+  const [currentView, setCurrentView] = useState('tasks')
   const [tasks, setTasks] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
@@ -23,6 +24,8 @@ function App() {
 
   // Set up real-time Firestore listener
   useEffect(() => {
+    if (currentView !== 'tasks') return
+    
     try {
       const q = query(collection(db, TASKS_COLLECTION), orderBy('createdAt', 'desc'))
       
@@ -49,7 +52,7 @@ function App() {
       setError(err.message)
       setLoading(false)
     }
-  }, [])
+  }, [currentView])
 
   const addTask = async () => {
     if (!newTask.trim()) return
@@ -102,113 +105,224 @@ function App() {
     active: tasks.filter(t => !t.completed).length
   }
 
-  return (
-    <div className="app">
-      <header className="header">
-        <h1>🎮 OpenClaw Command Center</h1>
-        <p className="subtitle">Task Tracker</p>
-      </header>
+  // Menu items for sidebar
+  const menuItems = [
+    { id: 'tasks', label: '📋 Tasks', icon: '📋' },
+  ]
 
-      <main className="main">
-        <section className="stats">
-          <div className="stat-card">
-            <span className="stat-number">{stats.total}</span>
-            <span className="stat-label">Total</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-number">{stats.active}</span>
-            <span className="stat-label">Active</span>
-          </div>
-          <div className="stat-card">
-            <span className="stat-number">{stats.completed}</span>
-            <span className="stat-label">Done</span>
-          </div>
-        </section>
-
-        <section className="add-task">
-          <input
-            type="text"
-            value={newTask}
-            onChange={(e) => setNewTask(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && addTask()}
-            placeholder="Add a new task..."
-            className="task-input"
-          />
-          <button onClick={addTask} className="add-btn">Add Task</button>
-        </section>
-
-        <section className="filters">
-          <button 
-            className={`filter-btn ${filter === 'all' ? 'active' : ''}`}
-            onClick={() => setFilter('all')}
-          >
-            All
-          </button>
-          <button 
-            className={`filter-btn ${filter === 'active' ? 'active' : ''}`}
-            onClick={() => setFilter('active')}
-          >
-            Active
-          </button>
-          <button 
-            className={`filter-btn ${filter === 'completed' ? 'active' : ''}`}
-            onClick={() => setFilter('completed')}
-          >
-            Completed
-          </button>
-        </section>
-
-        <section className="task-list">
-          {loading ? (
-            <p className="empty-state">Loading tasks...</p>
-          ) : error ? (
-            <p className="empty-state error">{error}</p>
-          ) : filteredTasks.length === 0 ? (
-            <p className="empty-state">No tasks found</p>
-          ) : (
-            filteredTasks.map(task => (
-              <div key={task.id} className={`task-item ${task.completed ? 'completed' : ''}`}>
-                <label className="checkbox-wrapper">
-                  <input
-                    type="checkbox"
-                    checked={task.completed}
-                    onChange={() => toggleTask(task.id, task.completed)}
-                  />
-                  <span className="checkmark"></span>
-                </label>
-                <span className="task-title">{task.title}</span>
-                <span className={`priority ${task.priority || 'medium'}`}>{task.priority || 'medium'}</span>
-                <button 
-                  onClick={() => deleteTask(task.id)}
-                  className="delete-btn"
-                >
-                  ✕
-                </button>
+  const renderContent = () => {
+    switch (currentView) {
+      case 'tasks':
+        return (
+          <>
+            <section className="stats">
+              <div className="stat-card">
+                <span className="stat-number">{stats.total}</span>
+                <span className="stat-label">Total</span>
               </div>
-            ))
-          )}
-        </section>
+              <div className="stat-card">
+                <span className="stat-number">{stats.active}</span>
+                <span className="stat-label">Active</span>
+              </div>
+              <div className="stat-card">
+                <span className="stat-number">{stats.completed}</span>
+                <span className="stat-label">Done</span>
+              </div>
+            </section>
 
-        <section className="connection-status">
-          <p>🔥 Data Source: {
-            loading ? <span className="status pending">Connecting...</span> :
-            error ? <span className="status error">{error}</span> :
-            <span className="status connected">
-              Firebase Realtime ({tasks.length} tasks)
-            </span>
-          }</p>
-          <p className="hint">
-            {error ? 'Check Firebase configuration' : 'Changes sync in real-time across all devices'}
+            <section className="add-task">
+              <input
+                type="text"
+                value={newTask}
+                onChange={(e) => setNewTask(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && addTask()}
+                placeholder="Add a new task..."
+                className="task-input"
+              />
+              <button onClick={addTask} className="add-btn">Add Task</button>
+            </section>
+
+            <section className="filters">
+              <button 
+                className={`filter-btn ${filter === 'all' ? 'active' : ''}`}
+                onClick={() => setFilter('all')}
+              >
+                All
+              </button>
+              <button 
+                className={`filter-btn ${filter === 'active' ? 'active' : ''}`}
+                onClick={() => setFilter('active')}
+              >
+                Active
+              </button>
+              <button 
+                className={`filter-btn ${filter === 'completed' ? 'active' : ''}`}
+                onClick={() => setFilter('completed')}
+              >
+                Completed
+              </button>
+            </section>
+
+            <section className="task-list">
+              {loading ? (
+                <p className="empty-state">Loading tasks...</p>
+              ) : error ? (
+                <p className="empty-state error">{error}</p>
+              ) : filteredTasks.length === 0 ? (
+                <p className="empty-state">No tasks found</p>
+              ) : (
+                filteredTasks.map(task => (
+                  <div key={task.id} className={`task-item ${task.completed ? 'completed' : ''}`}>
+                    <label className="checkbox-wrapper">
+                      <input
+                        type="checkbox"
+                        checked={task.completed}
+                        onChange={() => toggleTask(task.id, task.completed)}
+                      />
+                      <span className="checkmark"></span>
+                    </label>
+                    <span className="task-title">{task.title}</span>
+                    <span className={`priority ${task.priority || 'medium'}`}>{task.priority || 'medium'}</span>
+                    <button 
+                      onClick={() => deleteTask(task.id)}
+                      className="delete-btn"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))
+              )}
+            </section>
+
+            <section className="connection-status">
+              <p>🔥 Data Source: {
+                loading ? <span className="status pending">Connecting...</span> :
+                error ? <span className="status error">{error}</span> :
+                <span className="status connected">
+                  Firebase Realtime ({tasks.length} tasks)
+                </span>
+              }</p>
+              <p className="hint">
+                {error ? 'Check Firebase configuration' : 'Changes sync in real-time across all devices'}
+              </p>
+            </section>
+          </>
+        )
+      default:
+        return <p className="empty-state">Coming soon...</p>
+    }
+  }
+
+  return (
+    <div className="app-container">
+      <aside className="sidebar">
+        <div className="sidebar-header">
+          <h2>OpenClaw</h2>
+        </div>
+        <nav className="sidebar-nav">
+          {menuItems.map(item => (
+            <button
+              key={item.id}
+              className={`nav-item ${currentView === item.id ? 'active' : ''}`}
+              onClick={() => setCurrentView(item.id)}
+            >
+              <span className="nav-icon">{item.icon}</span>
+              <span className="nav-label">{item.label}</span>
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <p className="version">v0.2.0</p>
+        </div>
+      </aside>
+
+      <main className="main-content">
+        <header className="header">
+          <h1>🎮 OpenClaw Command Center</h1>
+          <p className="subtitle">
+            {currentView === 'tasks' ? 'Task Tracker' : 'Dashboard'}
           </p>
-        </section>
+        </header>
+        <div className="content">
+          {renderContent()}
+        </div>
       </main>
 
       <style>{`
-        .app {
+        .app-container {
+          display: flex;
           min-height: 100vh;
+        }
+
+        .sidebar {
+          width: 240px;
+          background: #1a1a2e;
+          border-right: 1px solid #333;
+          display: flex;
+          flex-direction: column;
+        }
+
+        .sidebar-header {
+          padding: 1.5rem;
+          border-bottom: 1px solid #333;
+        }
+
+        .sidebar-header h2 {
+          color: #646cff;
+          font-size: 1.25rem;
+          margin: 0;
+        }
+
+        .sidebar-nav {
+          flex: 1;
+          padding: 1rem 0;
+        }
+
+        .nav-item {
+          display: flex;
+          align-items: center;
+          gap: 0.75rem;
+          width: 100%;
+          padding: 0.75rem 1.5rem;
+          background: transparent;
+          border: none;
+          color: #888;
+          cursor: pointer;
+          font-size: 1rem;
+          text-align: left;
+          transition: all 0.2s;
+        }
+
+        .nav-item:hover {
+          background: rgba(100, 108, 255, 0.1);
+          color: #fff;
+        }
+
+        .nav-item.active {
+          background: rgba(100, 108, 255, 0.2);
+          color: #646cff;
+          border-right: 3px solid #646cff;
+        }
+
+        .nav-icon {
+          font-size: 1.25rem;
+        }
+
+        .sidebar-footer {
+          padding: 1rem 1.5rem;
+          border-top: 1px solid #333;
+        }
+
+        .version {
+          color: #666;
+          font-size: 0.75rem;
+          margin: 0;
+        }
+
+        .main-content {
+          flex: 1;
           padding: 2rem;
           max-width: 800px;
-          margin: 0 auto;
         }
 
         .header {
@@ -228,6 +342,11 @@ function App() {
         .subtitle {
           color: #888;
           font-size: 1rem;
+        }
+
+        .content {
+          display: flex;
+          flex-direction: column;
         }
 
         .stats {
