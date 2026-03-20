@@ -1,8 +1,17 @@
 import { useState, useEffect } from 'react'
+import { db } from './firebase'
+import { 
+  collection, 
+  onSnapshot, 
+  addDoc, 
+  updateDoc, 
+  deleteDoc, 
+  doc,
+  query,
+  orderBy
+} from 'firebase/firestore'
 
-const SPREADSHEET_ID = import.meta.env.VITE_GOOGLE_SHEETS_SPREADSHEET_ID
-const API_KEY = import.meta.env.VITE_GOOGLE_SHEETS_API_KEY
-const STORAGE_KEY = 'openclaw_tasks'
+const TASKS_COLLECTION = 'tasks'
 
 function App() {
   const [tasks, setTasks] = useState([])
@@ -12,119 +21,73 @@ function App() {
   const [filter, setFilter] = useState('all')
   const [dataSource, setDataSource] = useState('none')
 
-  // Load tasks from localStorage on mount
+  // Set up real-time Firestore listener
   useEffect(() => {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (stored) {
-      try {
-        const parsed = JSON.parse(stored)
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setTasks(parsed)
-          setDataSource('localStorage')
+    try {
+      const q = query(collection(db, TASKS_COLLECTION), orderBy('createdAt', 'desc'))
+      
+      const unsubscribe = onSnapshot(q, 
+        (snapshot) => {
+          const fetchedTasks = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }))
+          setTasks(fetchedTasks)
+          setDataSource('firebase')
           setLoading(false)
-          return
+        },
+        (err) => {
+          console.error('Firestore error:', err)
+          setError(err.message)
+          setLoading(false)
         }
-      } catch (e) {
-        console.warn('Failed to parse localStorage tasks:', e)
-      }
+      )
+
+      return () => unsubscribe()
+    } catch (err) {
+      console.error('Setup error:', err)
+      setError(err.message)
+      setLoading(false)
     }
-    // No stored tasks or parse failed - try Google Sheets
-    fetchTasks()
   }, [])
 
-  // Save tasks to localStorage whenever they change
-  useEffect(() => {
-    if (!loading && tasks.length > 0) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(tasks))
-    }
-  }, [tasks, loading])
-
-  const fetchTasks = async () => {
-    if (!SPREADSHEET_ID || !API_KEY) {
-      setError('Missing API configuration')
-      setLoading(false)
-      return
-    }
-
-    try {
-      const response = await fetch(
-        `https://sheets.googleapis.com/v4/spreadsheets/${SPREADSHEET_ID}/values/Sheet1!A:Z?key=${API_KEY}`
-      )
-      
-      if (!response.ok) {
-        throw new Error('Failed to fetch from Google Sheets')
-      }
-      
-      const data = await response.json()
-      
-      if (data.values && data.values.length > 0) {
-        // Check if first row is a header row
-        const firstRow = data.values[0].map(h => h?.toString().toLowerCase().trim() || '')
-        const hasHeader = firstRow.includes('task') || firstRow.includes('title') || firstRow.includes('name')
-        
-        let fetchedTasks
-        if (hasHeader) {
-          // Skip header row, map data to tasks
-          const headerRow = firstRow
-          const taskIndex = headerRow.indexOf('task') >= 0 ? headerRow.indexOf('task') : 
-                           headerRow.indexOf('title') >= 0 ? headerRow.indexOf('title') : 0
-          const statusIndex = headerRow.indexOf('status') >= 0 ? headerRow.indexOf('status') : 
-                             headerRow.indexOf('done') >= 0 ? headerRow.indexOf('done') : -1
-          const priorityIndex = headerRow.indexOf('priority') >= 0 ? headerRow.indexOf('priority') : -1
-          
-          fetchedTasks = data.values.slice(1).map((row, idx) => ({
-            id: idx + 1,
-            title: row[taskIndex] || '',
-            completed: statusIndex >= 0 ? (row[statusIndex]?.toLowerCase() === 'done' || row[statusIndex]?.toLowerCase() === 'completed' || row[statusIndex]?.toLowerCase() === 'x') : false,
-            priority: priorityIndex >= 0 ? (row[priorityIndex]?.toLowerCase() || 'medium') : 'medium'
-          })).filter(t => t.title)
-        } else {
-          // No header row - assume format: Task, Priority, Status
-          fetchedTasks = data.values.map((row, idx) => ({
-            id: idx + 1,
-            title: row[0] || '',
-            completed: row[2]?.toLowerCase() === 'x' || row[2]?.toLowerCase() === 'done' || row[2]?.toLowerCase() === 'completed',
-            priority: row[1]?.toLowerCase() || 'medium'
-          })).filter(t => t.title)
-        }
-        
-        setTasks(fetchedTasks)
-        setDataSource('googleSheets')
-      } else {
-        setTasks([])
-        setDataSource('googleSheets')
-      }
-    } catch (err) {
-      setError(err.message)
-      // If no data in localStorage either, start with empty array
-      if (tasks.length === 0) {
-        setTasks([])
-      }
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const addTask = () => {
+  const addTask = async () => {
     if (!newTask.trim()) return
-    const task = {
-      id: Date.now(),
-      title: newTask,
-      completed: false,
-      priority: 'medium'
+    
+    try {
+      await addDoc(collection(db, TASKS_COLLECTION), {
+        title: newTask.trim(),
+        completed: false,
+        priority: 'medium',
+        createdAt: Date.now()
+      })
+      setNewTask('')
+    } catch (err) {
+      console.error('Error adding task:', err)
+      setError(err.message)
     }
-    setTasks([...tasks, task])
-    setNewTask('')
   }
 
-  const toggleTask = (id) => {
-    setTasks(tasks.map(task => 
-      task.id === id ? { ...task, completed: !task.completed } : task
-    ))
+  const toggleTask = async (id, currentStatus) => {
+    try {
+      const taskRef = doc(db, TASKS_COLLECTION, id)
+      await updateDoc(taskRef, {
+        completed: !currentStatus
+      })
+    } catch (err) {
+      console.error('Error toggling task:', err)
+      setError(err.message)
+    }
   }
 
-  const deleteTask = (id) => {
-    setTasks(tasks.filter(task => task.id !== id))
+  const deleteTask = async (id) => {
+    try {
+      const taskRef = doc(db, TASKS_COLLECTION, id)
+      await deleteDoc(taskRef)
+    } catch (err) {
+      console.error('Error deleting task:', err)
+      setError(err.message)
+    }
   }
 
   const filteredTasks = tasks.filter(task => {
@@ -198,6 +161,8 @@ function App() {
         <section className="task-list">
           {loading ? (
             <p className="empty-state">Loading tasks...</p>
+          ) : error ? (
+            <p className="empty-state error">{error}</p>
           ) : filteredTasks.length === 0 ? (
             <p className="empty-state">No tasks found</p>
           ) : (
@@ -207,12 +172,12 @@ function App() {
                   <input
                     type="checkbox"
                     checked={task.completed}
-                    onChange={() => toggleTask(task.id)}
+                    onChange={() => toggleTask(task.id, task.completed)}
                   />
                   <span className="checkmark"></span>
                 </label>
                 <span className="task-title">{task.title}</span>
-                <span className={`priority ${task.priority}`}>{task.priority}</span>
+                <span className={`priority ${task.priority || 'medium'}`}>{task.priority || 'medium'}</span>
                 <button 
                   onClick={() => deleteTask(task.id)}
                   className="delete-btn"
@@ -225,32 +190,16 @@ function App() {
         </section>
 
         <section className="connection-status">
-          <p>📊 Data Source: {
-            loading ? <span className="status pending">Loading...</span> :
-            error && dataSource === 'none' ? <span className="status error">{error}</span> :
+          <p>🔥 Data Source: {
+            loading ? <span className="status pending">Connecting...</span> :
+            error ? <span className="status error">{error}</span> :
             <span className="status connected">
-              {dataSource === 'googleSheets' ? 'Google Sheets' : 'Local Storage'} 
-              ({tasks.length} tasks)
+              Firebase Realtime ({tasks.length} tasks)
             </span>
           }</p>
           <p className="hint">
-            {dataSource === 'localStorage' ? 'Changes saved to browser storage' : 
-             error ? 'Check API key and spreadsheet ID' : 
-             'Data syncs from Google Sheets • Changes saved locally'}
+            {error ? 'Check Firebase configuration' : 'Changes sync in real-time across all devices'}
           </p>
-          {dataSource === 'localStorage' && (
-            <button 
-              onClick={() => {
-                localStorage.removeItem(STORAGE_KEY)
-                setDataSource('none')
-                setTasks([])
-                fetchTasks()
-              }}
-              className="refresh-btn"
-            >
-              🔄 Retry Google Sheets
-            </button>
-          )}
         </section>
       </main>
 
@@ -441,6 +390,10 @@ function App() {
           padding: 2rem;
         }
 
+        .empty-state.error {
+          color: #ff4757;
+        }
+
         .connection-status {
           text-align: center;
           padding: 1rem;
@@ -465,21 +418,6 @@ function App() {
           font-size: 0.875rem;
           color: #666;
           margin-top: 0.5rem;
-        }
-
-        .refresh-btn {
-          margin-top: 0.75rem;
-          background: #646cff;
-          color: white;
-          border: none;
-          padding: 0.5rem 1rem;
-          border-radius: 6px;
-          cursor: pointer;
-          font-size: 0.875rem;
-        }
-
-        .refresh-btn:hover {
-          background: #535bf2;
         }
       `}</style>
     </div>
