@@ -7,6 +7,43 @@ admin.initializeApp();
 const NOTION_API_KEY = process.env.NOTION_API_KEY;
 const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID;
 
+// HTTP function to log conversation messages
+// Call this from anywhere to log a message to Firebase
+exports.logConversation = functions.https.onRequest(async (req, res) => {
+  // Enable CORS
+  res.set('Access-Control-Allow-Origin', '*');
+  
+  if (req.method === 'OPTIONS') {
+    res.set('Access-Control-Allow-Methods', 'POST');
+    res.set('Access-Control-Allow-Headers', 'Content-Type');
+    res.status(204).send('');
+    return;
+  }
+
+  try {
+    const { role, message, source } = req.body;
+    
+    if (!message) {
+      res.status(400).json({ error: 'Message is required' });
+      return;
+    }
+
+    // Save to Firestore logs collection
+    const logRef = await admin.firestore().collection('logs').add({
+      message: `[${role || 'assistant'}] ${message}`,
+      type: 'conversation',
+      details: source || 'kilo-assistant',
+      timestamp: Date.now(),
+      source: 'conversation'
+    });
+
+    res.json({ success: true, id: logRef.id });
+  } catch (err) {
+    console.error('Error logging conversation:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Firestore trigger - runs when a new task is created
 exports.onNewTask = functions.firestore
   .document('tasks/{taskId}')
