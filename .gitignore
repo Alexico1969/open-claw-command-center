@@ -30,3 +30,7 @@ dist-ssr
 
 # Secret files
 .secret
+
+# Firebase Functions
+functions/node_modules
+functions/lib
