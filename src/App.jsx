@@ -39,7 +39,7 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [newTask, setNewTask] = useState('')
-  const [filter, setFilter] = useState('all')
+  const [filter, setFilter] = useState('active')
   const [dataSource, setDataSource] = useState('none')
   const [logSearch, setLogSearch] = useState('')
   const [logDateFilter, setLogDateFilter] = useState('')
